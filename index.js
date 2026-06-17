@@ -63,20 +63,33 @@ app.post("/auth/google", async (req, res) => {
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
-    const { sub: googleId, email, name, picture } = ticket.getPayload();
-    let result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
-    let user = result.rows[0];
+    const { sub: googleId, email, name } = ticket.getPayload();
+    const result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+    const user = result.rows[0];
     if (!user) {
-      const insert = await db.query(
-        "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id",
-        [name, email, `google_${googleId}`]
-      );
-      user = { id: insert.rows[0].id, name, email };
+      // New user — tell frontend to complete sign up
+      return res.json({ newUser: true, googleData: { name, email, googleId } });
     }
     const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
   } catch (e) {
     res.status(401).json({ error: "Invalid Google token" });
+  }
+});
+
+app.post("/auth/google/register", async (req, res) => {
+  const { name, email, googleId } = req.body;
+  if (!name || !email || !googleId) return res.status(400).json({ error: "Missing fields" });
+  try {
+    const insert = await db.query(
+      "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id",
+      [name, email, `google_${googleId}`]
+    );
+    const id = insert.rows[0].id;
+    const token = jwt.sign({ id, name, email }, JWT_SECRET);
+    res.json({ token, user: { id, name, email } });
+  } catch {
+    res.status(400).json({ error: "Email already exists" });
   }
 });
 
