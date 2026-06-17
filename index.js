@@ -2,7 +2,10 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
 const db = require("./db");
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -50,6 +53,31 @@ app.post("/auth/login", async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET);
   res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+});
+
+app.post("/auth/google", async (req, res) => {
+  const { idToken } = req.body;
+  if (!idToken) return res.status(400).json({ error: "ID token required" });
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const { sub: googleId, email, name, picture } = ticket.getPayload();
+    let result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+    let user = result.rows[0];
+    if (!user) {
+      const insert = await db.query(
+        "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id",
+        [name, email, `google_${googleId}`]
+      );
+      user = { id: insert.rows[0].id, name, email };
+    }
+    const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET);
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+  } catch (e) {
+    res.status(401).json({ error: "Invalid Google token" });
+  }
 });
 
 // ── Ideas ─────────────────────────────────────────────
